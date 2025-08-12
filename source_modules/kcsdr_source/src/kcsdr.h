@@ -1,150 +1,158 @@
-#pragma once
+#ifndef __KCSDR_H__
+#define __KCSDR_H__
+
+#include <stdbool.h>
 #include <stdint.h>
 
-#define KCSDR_SERIAL_LEN    16
-#define KCSDR_MAX_PORTS     6
+#define DEVICE_NAME_LEN (50)
+#define DEVICE_PORT     (6)
 
-// Detect C++
+#ifdef __linux__
+#define SYMBOL_EXPORT   
+#elif defined(_WIN32) || defined(_WIN64)
+#define SYMBOL_EXPORT __declspec(dllexport) 
+#endif 
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * KCSDR Device.
-*/
-struct kcsdr;
-typedef struct kcsdr kcsdr_t;
+typedef struct 
+{
+    int minimum;
+    int step;
+    int64_t maximum;
+}par_range;
+typedef struct 
+{
+    bool      set;
+    par_range rx_freq;
+    par_range tx_freq;
+    par_range bw;
+    par_range att;
+    par_range amp;
+    par_range ifgain;
+    par_range samp_rate;
+}dev_range;
+typedef enum 
+{
+    INT_16,
+    INT_32,
+    FLOAT_32,
+}data_type;
 
-/**
- * Device Information
-*/
-struct kcsdr_info {
-    char serial[KCSDR_SERIAL_LEN+1];
-};
-typedef struct kcsdr_info kcsdr_info_t;
+typedef enum
+{
+    DEV_RUNNING,
+    DEV_DISCONNECTED,
+    DEV_ERR,
+}dev_status;
+typedef struct 
+{
+    data_type type;
+    uint16_t  iq_pair;
+}data_val;
 
-/**
- * RF Direction.
-*/
-enum kcsdr_direction {
-    KCSDR_DIR_RX    = 0x00,
-    KCSDR_DIR_TX    = 0x80
-};
-typedef enum kcsdr_direction kcsdr_direction_t;
+#define CAL_ATT_STEP (3)
+#define CAL_IN_AMP_STEP (5)
+#define CAL_EXT_AMP_STEP (2)
 
-/**
- * Get a list of KCSDR devices on the system.
- * @param devices Pointer to an array of device info.
- * @return Number of devices found or error code.
-*/
-int kcsdr_list_devices(kcsdr_info_t** devices);
+typedef struct 
+{
+    uint8_t     port;
+    uint64_t    freq;
+    float       lev;
+    uint8_t     status;
+}cal_cmd;
 
-/**
- * Free a device list returned by `kcsdr_list_devices()`.
- * @param devices Device list to free.
-*/
-void kcsdr_free_device_list(kcsdr_info_t* devices);
+typedef struct 
+{
+    uint64_t freq;
+    float base;
+    float att[CAL_ATT_STEP];
+    float amp[CAL_IN_AMP_STEP];
+    float ext_amp[CAL_EXT_AMP_STEP];
+    float rssi_limit;
+    float field_limit;
+    uint8_t status;
+}cal_fr_ret;
 
-/**
- * Open a KCSDR device.
- * @param dev Newly open device.
- * @param serial Serial number of the device to open as returned in the device list.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_open(kcsdr_t** dev, const char* serial);
+typedef struct
+{
+    cal_cmd     cmd;
+    cal_fr_ret  data;
+}cal_fr;
 
-/**
- * Close a KCSDR device.
- * @param dev Device to be closed.
-*/
-void kcsdr_close(kcsdr_t* dev);
+typedef struct 
+{
+    bool (*find)(char *name, int **private_val);
+    void (*close)(int *private_val); 
+    void (*freq)(uint64_t freq, int *private_val, bool is_rx);  
+    void (*port)(uint8_t port, int *private_val, bool is_rx);
+    void (*bw)(uint32_t bw, int *private_val, bool is_rx);
+    void (*fe_att)(uint8_t att, int *private_val, bool is_rx);
+    void (*fe_amp)(uint8_t amp, int *private_val, bool is_rx);
+    void (*fe_ext_amp)(uint8_t amp, int *private_val, bool is_rx);
+    void (*start)(int *private_val, bool is_rx);
+    void (*stop)(int *private_val, bool is_rx);
+    bool (*read)(int *private_val, uint8_t *buf, uint32_t size);
+    bool (*write)(int *private_val, uint8_t *buf, uint32_t size);
+    dev_status (*status)(int *private_val);
 
-/**
- * Select the RF port.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX.
- * @param port RF port number to select.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_set_port(kcsdr_t* dev, kcsdr_direction_t dir, uint8_t port);
+    bool (*serial_num_get)(int *private_val, uint8_t *buf); 
+    void (*data_get)(int *private_val, data_val *data); 
+    void (*port_get)(int *private_val, dev_range *port); 
+    uint32_t (*bw_get)(int *private_val, uint16_t index);
+    void *(*fr_cal)(int *private_val, cal_fr * fr);
+}device_op;
 
-/**
- * Set the center frequency.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX
- * @param freq Frequency in Hz.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_set_frequency(kcsdr_t* dev, kcsdr_direction_t dir, uint64_t freq);
+typedef enum
+{
+    KC_908_1,
+    KC_908_N,
+}device_type;
 
-/**
- * Set the attenuation.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX
- * @param samplerate Attenuation in dB.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_set_attenuation(kcsdr_t* dev, kcsdr_direction_t dir, uint8_t att);
+typedef struct
+{
+    char            name[DEVICE_NAME_LEN];
+    char            serial_num[DEVICE_NAME_LEN];
+    data_val        data;
+    dev_range       port[DEVICE_PORT];
+    int             *private_val;
+    device_op       operation;
+}sdr_obj;
 
-/**
- * Set the internal amplifier gain.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX
- * @param gain Gain in dB.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_set_amp_gain(kcsdr_t* dev, kcsdr_direction_t dir, uint8_t gain);
+typedef struct 
+{
+    sdr_obj *(*find)(device_type type);
+    void (*close)(sdr_obj *obj);
+    void (*rx_freq)(sdr_obj *obj, uint64_t freq);
+    void (*rx_port)(sdr_obj *obj, uint8_t port);
+    void (*rx_bw)(sdr_obj *obj, uint32_t bw);
+    void (*rx_att)(sdr_obj *obj, uint8_t att);
+    void (*rx_amp)(sdr_obj *obj, uint8_t amp);
+    void (*rx_ext_amp)(sdr_obj *obj, uint8_t amp);
+    void (*rx_samp_rate)(sdr_obj *obj, uint8_t amp);
+    void (*rx_start)(sdr_obj *obj);
+    void (*rx_stop)(sdr_obj *obj);  
+    void *(*fr_cal)(sdr_obj *obj, cal_fr * fr);
+    void (*tx_freq)(sdr_obj *obj, uint64_t freq);
+    void (*tx_port)(sdr_obj *obj, uint8_t port);
+    void (*tx_bw)(sdr_obj *obj, uint32_t bw);
+    void (*tx_att)(sdr_obj *obj, uint8_t att);
+    void (*tx_amp)(sdr_obj *obj, uint8_t amp);
+    void (*tx_samp_rate)(sdr_obj *obj, uint8_t amp);
+    void (*tx_start)(sdr_obj *obj);
+    void (*tx_stop)(sdr_obj *obj); 
+    dev_status (*status)(sdr_obj *obj);
 
-/**
- * Set the external amplifier gain.
- * @param dev Device to control.
- * @param gain Gain in dB.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_set_rx_ext_amp_gain(kcsdr_t* dev, uint8_t gain);
+    bool (*read)(sdr_obj *obj, uint8_t *buf, uint32_t size);
+    bool (*write)(sdr_obj *obj, uint8_t *buf, uint32_t size);
+    uint32_t(*bw_get)(sdr_obj *obj, uint16_t index);     
+}sdr_api;
 
-/**
- * Set the samplerate.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX
- * @param samplerate Samplerate in Hz.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_set_samplerate(kcsdr_t* dev, kcsdr_direction_t dir, uint32_t samplerate);
-
-/**
- * Start streaming samples.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_start(kcsdr_t* dev, kcsdr_direction_t dir);
-
-/**
- * Stop streaming samples.
- * @param dev Device to control.
- * @param dir Either KCSDR_DIR_RX or KCSDR_DIR_TX.
- * @return 0 on success, error code otherwise.
-*/
-int kcsdr_stop(kcsdr_t* dev, kcsdr_direction_t dir);
-
-/**
- * Receive a buffer of samples.
- * @param samples Sample buffer.
- * @param count Number of complex samples.
- * @return Number of samples received.
-*/
-int kcsdr_rx(kcsdr_t* dev, int16_t* samples, int count);
-
-/**
- * Transmit a buffer of samples.
- * @param samples Sample buffer.
- * @param count Number of complex samples.
- * @return Number of samples transmitted.
-*/
-int kcsdr_tx(kcsdr_t* dev, const int16_t* samples, int count);
-
-// Detect C++
+extern SYMBOL_EXPORT sdr_api * kcsdr_init(void);
 #ifdef __cplusplus
 }
+#endif
 #endif
